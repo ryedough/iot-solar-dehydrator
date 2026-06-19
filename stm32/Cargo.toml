@@ -1,0 +1,24 @@
+[package]
+name = "stm32"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name ="stm32"
+test = false
+
+[dependencies]
+embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "executor-thread", "executor-interrupt"] }
+embassy-stm32 = {
+    version = "0.6.0",
+    features = [ "stm32f103c8", "unstable-pac", "memory-x", "time-driver-any", "exti" ],
+}
+
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
+panic-halt = "1.0.0"
+embedded-hal = "1.0.0"
+embedded-io = "0.7.1"
+embassy-time = "0.5.1"
+
+
