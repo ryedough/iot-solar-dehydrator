@@ -1,17 +1,8 @@
 [build]
-target = "thumbv7em-none-eabihf"
+target = "thumbv7em-none-eabi"
 
-[target.thumbv7em-none-eabihf]
-runner = "arm-none-eabi-gdb -q -x openocd.gdb"
-rustflags = [
-    "-C", "link-arg=-Tlink.x"
-]
-
-[profile.dev]
-opt-level = "s"
-
-[profile.release]
-debug = 2
+[target.thumbv7em-none-eabi]
+runner = "probe-rs run --no-location --chip STM32F103C8T6"
 
 [env]
 DEFMT_LOG = "info"
