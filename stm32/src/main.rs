@@ -24,14 +24,16 @@ async fn main(spawner : Spawner) -> ! {
     let p = embassy_stm32::init(Default::default());
 
     let i2c = embassy_stm32::i2c::I2c::new(p.I2C1, p.PB6, p.PB7, p.DMA1_CH6, p.DMA1_CH7, Irqs, Default::default());
-    let mut ssd1315 = ssd1315::SSD1315::new(i2c);
-    ssd1315.init().await.unwrap();
-    for y in 0..11 {
-        for x in 0..11 {
-            ssd1315.set_pixel(x, y, true);
-        }
-    }
-    ssd1315.flush().await.unwrap();
+    let mut display = ssd1315::SSD1315::new(i2c);
+    display.init().await.unwrap();
+
+    let style = PrimitiveStyle::with_fill(BinaryColor::On);
+    Circle::new(Point::new(10, 10), 20)
+        .into_styled(style)
+        .draw(&mut display).unwrap();
+
+    display.flush().await.unwrap();
+
     loop{
         nop();
     }

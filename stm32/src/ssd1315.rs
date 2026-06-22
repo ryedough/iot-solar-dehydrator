@@ -1,5 +1,7 @@
 use defmt::info;
 use embassy_stm32::i2c::{Error, I2c};
+use embedded_graphics::{draw_target::DrawTarget, pixelcolor::BinaryColor};
+use embedded_graphics::prelude::*;
 
 type SSD1315Iface = I2c<'static, embassy_stm32::mode::Async, embassy_stm32::i2c::Master>;
 
@@ -98,5 +100,31 @@ impl SSD1315 {
             0xAF        // Turn the display on
         ];
         Self::write_raw::<19, {19 * 2}>(&mut self.iface, self.addr, &cmds, WriteType::Command).await
+    }
+}
+
+impl DrawTarget for SSD1315 {
+    type Color = BinaryColor;
+    type Error = Error;
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Pixel<Self::Color>>
+    {
+        for Pixel(coord, color) in pixels.into_iter() {
+            if let Ok((x @ 0..=63, y @ 0..=63)) = coord.try_into() {
+                self.set_pixel(x as u8, y as u8, color.is_on());
+            }
+        };
+        Ok(())
+    }
+}
+
+impl OriginDimensions for SSD1315 {
+    fn size(&self) -> Size {
+        Size {
+            width : 128,
+            height: 64
+        }
     }
 }
