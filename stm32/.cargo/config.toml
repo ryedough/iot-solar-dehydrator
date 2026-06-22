@@ -1,8 +1,14 @@
 [build]
-target = "thumbv7em-none-eabi"
+target = "thumbv7m-none-eabi"
 
-[target.thumbv7em-none-eabi]
-runner = "probe-rs run --no-location --chip STM32F103C8T6"
+[target.thumbv7m-none-eabi]
+runner = "probe-rs run --no-location --chip STM32F103C8Tx"
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+debug = 2
 
 [env]
 DEFMT_LOG = "info"
