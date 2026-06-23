@@ -21,4 +21,6 @@ defmt-rtt = "1.2.0"
 embedded-graphics = { version = "0.8.2", features = ["defmt", "fixed_point"] }
 embassy-futures = { version = "0.1.2", features = ["defmt"] }
 heapless = { version = "0.9.3", features = ["defmt"] }
+tinybmp = "0.7.0"
+embedded-hal-async = "1.0.0"
 
