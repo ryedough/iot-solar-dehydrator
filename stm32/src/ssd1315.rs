@@ -1,16 +1,13 @@
-use defmt::info;
-use embassy_stm32::i2c::{Error, I2c};
+use embassy_stm32::i2c::{Error};
 use embedded_graphics::{draw_target::DrawTarget, pixelcolor::BinaryColor};
 use embedded_graphics::prelude::*;
 use embedded_hal_async::i2c::Operation;
+use crate::{I2C};
 use crate::animation::FlushableDisplay;
 
-type SSD1315Iface = I2c<'static, embassy_stm32::mode::Async, embassy_stm32::i2c::Master>;
-
+const SSD1315_ADDRESS : u8 = 0x3C;
 pub struct SSD1315 {
     framebuffer: [u8; 128 * 8],
-    iface: SSD1315Iface,
-    addr : u8,
 }
 
 enum SetAddress {
@@ -24,20 +21,18 @@ enum WriteType {
 }
 
 impl SSD1315 {
-    pub fn new(iface : SSD1315Iface)->Self {
+    pub fn new()->Self {
         Self {
             framebuffer : [0; 128 * 8],
-            addr : 0x3C,
-            iface
         }
     }
 
-    async fn write_raw(iface : &mut SSD1315Iface, self_addr : u8, cmds : &[u8], t : WriteType) -> Result<(), Error> {
+    async fn write_raw(cmds : &[u8], t : WriteType) -> Result<(), Error> {
         let ctrl: u8 = match t{
             WriteType::Command => 0x00,
             WriteType::Data => 0x40
         };
-        iface.transaction(self_addr, &mut [
+        I2C.lock().await.as_mut().unwrap().transaction(SSD1315_ADDRESS, &mut [
             Operation::Write(&[ctrl]),
             Operation::Write(cmds),
         ]).await
@@ -56,7 +51,7 @@ impl SSD1315 {
                 end & 0x7F,
             ]
         };
-        Self::write_raw(&mut self.iface, self.addr, &cmd, WriteType::Command).await
+        Self::write_raw(&cmd, WriteType::Command).await
     }
 
     pub fn set_pixel(&mut self, x :u8, y :u8, value : bool) {
@@ -69,7 +64,6 @@ impl SSD1315 {
             *target &= !(0x1 << (y % 8));
         };
     }
-
 
     pub async fn init(&mut self) -> Result<(), Error> {
         let cmds : [u8; _] = [
@@ -86,7 +80,7 @@ impl SSD1315 {
             0x8D, 0x14, // Enable Charge pump
             0xAF        // Turn the display on
         ];
-        Self::write_raw(&mut self.iface, self.addr, &cmds, WriteType::Command).await
+        Self::write_raw(&cmds, WriteType::Command).await
     }
 }
 
@@ -137,6 +131,6 @@ impl FlushableDisplay for SSD1315 {
         //         f_debug.clear();
         //     }
         // }
-        Self::write_raw(&mut self.iface, self.addr, framebuffer,WriteType::Data).await
+        Self::write_raw(framebuffer,WriteType::Data).await
     }
 }

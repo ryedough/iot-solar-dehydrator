@@ -6,9 +6,12 @@ runner = "probe-rs run --no-location --chip STM32F103C8Tx"
 
 [profile.dev]
 opt-level = "s"
+lto = true
+DEFMT_LOG = "info"
 
 [profile.release]
 debug = 2
-
-[env]
-DEFMT_LOG = "info"
+# strip = true
+opt-level = "s"
+lto = true
+DEFMT_LOG = "error"

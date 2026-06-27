@@ -1,5 +1,4 @@
 mod logo_animation;
-use defmt::info;
 pub use logo_animation::LogoAnimation;
 
 use core::{fmt::{Debug}};
@@ -41,7 +40,7 @@ impl Animations {
     }
 }
 
-pub async fn play_animation<T : FlushableDisplay>(display : &mut T, animations : &mut [Animations], tick_duration : Duration)->Result<(), T::Error> {
+pub async fn animate<T : FlushableDisplay>(display : &mut T, animations : &mut [Animations], tick_duration : Duration)->Result<(), T::Error> {
     while !animations.last().unwrap().is_done(){
         let now = embassy_time::Instant::now();
         for animation in animations.iter_mut() {
