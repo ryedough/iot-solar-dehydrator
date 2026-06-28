@@ -3,7 +3,7 @@ use embedded_hal_async::i2c::Operation;
 
 use crate::{I2C};
 
-#[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug)]
 pub enum SHT31Error {
     NotConnected,
     NoResponse,

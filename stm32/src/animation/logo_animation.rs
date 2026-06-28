@@ -1,7 +1,7 @@
 use embedded_graphics::{image::Image, pixelcolor::BinaryColor, prelude::*, primitives::{PrimitiveStyle, Rectangle, StyledDrawable}};
 use tinybmp::Bmp;
 
-use crate::animation::{Animation, Animations, FlushableDisplay, CheckableAnimation};
+use crate::{DISPLAY_HEIGHT, DISPLAY_WIDTH, animation::{Animation, Animations, CheckableAnimation, FlushableDisplay}};
 
 // These const are defined in Ticks (not in millisecond)
 // Tick are defined by the animate function
@@ -35,8 +35,6 @@ impl LogoAnimation {
 
 impl<D : FlushableDisplay> Animation<D> for LogoAnimation {
     async fn tick(&mut self, display : &mut D) -> Result<(), D::Error> {
-        let display_w = display.bounding_box().size.width;
-        let display_h = display.bounding_box().size.height;
 
         // Draw sweep
         if self.swipe_full_at_tick.is_none() {
@@ -45,7 +43,7 @@ impl<D : FlushableDisplay> Animation<D> for LogoAnimation {
                 if self.tick_n < stagger {
                     break;
                 }
-                if (*swipe_w as u32) < display_w {
+                if *swipe_w < DISPLAY_WIDTH {
                     *swipe_w += LOGO_SWIPE_BOX_SPEED;
                 }
 
@@ -60,8 +58,8 @@ impl<D : FlushableDisplay> Animation<D> for LogoAnimation {
         let ryedough_logo = Image::new(
             ryedough_logo,
             Point::new(
-                display_w as i32 / 2 - (ryedough_logo.bounding_box().size.width as i32 /2),
-                display_h as i32 / 2 - (ryedough_logo.bounding_box().size.height as i32/2),
+                DISPLAY_WIDTH as i32 / 2 - (ryedough_logo.bounding_box().size.width as i32 /2),
+                DISPLAY_HEIGHT as i32 / 2 - (ryedough_logo.bounding_box().size.height as i32/2),
         ));
 
         ryedough_logo.draw(display).unwrap();
