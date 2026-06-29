@@ -149,6 +149,7 @@ impl MainMenu {
             if !lerp.is_done() {
                 let _ = self.side_menu_lerp.insert(lerp);
             }
+            self.changed = true;// render one last time
         }
     }
     async fn render(&self, display: &mut impl FlushableDisplay) {

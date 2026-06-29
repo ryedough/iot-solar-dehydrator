@@ -33,7 +33,7 @@ impl SHT31 {
     }
     pub async fn get_climate(&self) -> Result<SHT31Reading, SHT31Error> {
         if let Err(_) = I2C.lock().await.as_mut().unwrap().transaction(SHT31_ADDRESS, &mut [
-            Operation::Write(&[0x24, 0x00]),
+            Operation::Write(&[0x24, 0x00]), // high repeatability
         ]).await {
             return Err(SHT31Error::NotConnected);
         };
