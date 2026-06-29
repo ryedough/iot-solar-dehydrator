@@ -11,12 +11,13 @@ use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, signal::Signal};
 use embassy_time::{Timer, Duration};
 use panic_probe as _;
 
-use crate::{sht31::SHT31Reading, ssd1315::SSD1315};
+use crate::{at24c08::registered_addresses, sht31::SHT31Reading, ssd1315::SSD1315};
 
 mod animation;
 mod main_menu;
 mod ssd1315;
 mod sht31;
+mod at24c08;
 
 const DISPLAY_WIDTH : u8 = 128;
 const DISPLAY_HEIGHT : u8 = 64;
@@ -46,24 +47,29 @@ bind_interrupts!(struct Irqs {
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
     use animation::*;
-
     let p = embassy_stm32::init(Default::default());
 
+    // init i2c
     let mut cfg = embassy_stm32::i2c::Config::default();
     cfg.frequency = embassy_stm32::time::Hertz(400_000);
     let i2c = embassy_stm32::i2c::I2c::new(p.I2C1, p.PB6, p.PB7,
         p.DMA1_CH6, p.DMA1_CH7, Irqs, cfg);
     let _ = I2C.lock().await.insert(i2c);
 
+    // init eeprom and load settings
+    let mut eeprom = at24c08::AT24C08::new();
+
+    // init display
     let mut display = ssd1315::SSD1315::new();
     while let Err(_) = display.init().await {
         error!("Display not found, retrying...");
         Timer::after_secs(1).await;
     }
-
+    // animate logo splash screen
     let mut logo_anim : [Animations; _] = [LogoAnimation::new()];
     animate(&mut display, &mut logo_anim, Duration::from_millis(50)).await.unwrap();
 
+    // init tasks
     let down_btn = ExtiInput::new(p.PB3, p.EXTI3, embassy_stm32::gpio::Pull::Down, Irqs);
     let up_btn = ExtiInput::new(p.PB4, p.EXTI4, embassy_stm32::gpio::Pull::Down, Irqs);
 
