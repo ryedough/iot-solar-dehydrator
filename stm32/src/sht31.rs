@@ -20,16 +20,18 @@ impl defmt::Format for SHT31Error {
 
 const SHT31_ADDRESS : u8 = 0x44;
 pub struct SHT31 {
+    calibration : SHT31Reading,
 }
 
+#[derive(Clone)]
 pub struct SHT31Reading {
     pub temp : f32,
     pub humid : f32,
 }
 
 impl SHT31 {
-    pub fn new() -> Self {
-        return Self {}
+    pub fn new(calibration : SHT31Reading) -> Self {
+        return Self {calibration}
     }
     pub async fn get_climate(&self) -> Result<SHT31Reading, SHT31Error> {
         if let Err(_) = I2C.lock().await.as_mut().unwrap().transaction(SHT31_ADDRESS, &mut [
@@ -45,9 +47,9 @@ impl SHT31 {
             return Err(SHT31Error::NoResponse);
         };
         let temp = u16::from_be_bytes([reading[0], reading[1]]);
-        let temp = -45. + (175. * (temp as f32 / 65535.));
+        let temp = -45. + (175. * (temp as f32 / 65535.)) + self.calibration.temp;
         let humid = u16::from_be_bytes([reading[3], reading[4]]);
-        let humid = 100. * (humid as f32 / 65535.);
+        let humid = 100. * (humid as f32 / 65535.) + self.calibration.humid;
 
         return Ok(SHT31Reading{
             temp, humid,
