@@ -9,9 +9,10 @@ use embassy_futures::yield_now;
 use embassy_stm32::{bind_interrupts, exti::ExtiInput, mode::Async};
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, signal::Signal};
 use embassy_time::{Timer, Duration};
+use embedded_graphics::{pixelcolor::BinaryColor, primitives::PrimitiveStyle};
 use panic_probe as _;
 
-use crate::{at24c08::registered_addresses, sht31::SHT31Reading, ssd1315::SSD1315};
+use crate::{at24c08::{AT24C08, registered_addresses}, sht31::SHT31Reading, ssd1315::SSD1315};
 
 mod animation;
 mod menu;
@@ -38,6 +39,10 @@ enum InputEvt {
 
 const DISPLAY_WIDTH : u8 = 128;
 const DISPLAY_HEIGHT : u8 = 64;
+
+
+const PRIMITIVE_STYLE_ON : PrimitiveStyle<BinaryColor> = PrimitiveStyle::with_fill(BinaryColor::On);
+const PRIMITIVE_STYLE_OFF : PrimitiveStyle<BinaryColor> = PrimitiveStyle::with_fill(BinaryColor::Off);
 
 type SharedI2c = embassy_sync::mutex::Mutex<embassy_sync::blocking_mutex::raw::ThreadModeRawMutex,
     Option<embassy_stm32::i2c::I2c<'static, embassy_stm32::mode::Async, embassy_stm32::i2c::Master>>>;
@@ -98,7 +103,7 @@ async fn main(spawner: Spawner) -> ! {
 
     // init task
     spawner.spawn(read_sht().unwrap());
-    spawner.spawn(render_menu(display, calibration).unwrap());
+    spawner.spawn(render_menu(display, calibration, eeprom).unwrap());
     loop {
         yield_now().await;
     }
@@ -117,9 +122,9 @@ async fn listen_input(
 }
 
 #[task]
-async fn render_menu(mut display : SSD1315, mut calibration : SHT31Reading) {
+async fn render_menu(mut display : SSD1315, mut calibration : SHT31Reading, mut eeprom : AT24C08) {
     use menu::*;
-    let mut menu = Menu::MainMenu(MainMenu::new());
+    let mut menu = Menu::MainMenu(MainMenu::new(None));
     loop {
         match &mut menu {
             Menu::MainMenu(m) => {
@@ -144,7 +149,13 @@ async fn render_menu(mut display : SSD1315, mut calibration : SHT31Reading) {
                 match input_flag {
                     Some(f) => {
                         match f {
-                            menu::sensor_menu::OnInputFlag::Save(r) => calibration = r,
+                            menu::sensor_menu::OnInputFlag::Save(c) => {
+                                eeprom.write(registered_addresses::SHT_CALIBRATION,c.clone()).await.unwrap();
+                                calibration = c.clone();
+                                CALIBRATION.signal(c.clone());
+                                menu = Menu::MainMenu(MainMenu::new(Some(menu::main_menu::Selection::Sensor)));
+                            },
+                            menu::sensor_menu::OnInputFlag::BackToMain => menu = Menu::MainMenu(MainMenu::new(Some(menu::main_menu::Selection::Sensor))),
                             menu::sensor_menu::OnInputFlag::None => ()
                         }
                     },

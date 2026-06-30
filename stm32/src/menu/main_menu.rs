@@ -2,7 +2,7 @@ use core::{fmt::Write, ops::{Add, AddAssign, Sub, SubAssign}};
 use embassy_time::{Duration};
 use embedded_graphics::{
     Drawable,
-    image::{Image, ImageRawBE},
+    image::{Image, ImageRaw},
     mono_font::MonoTextStyle,
     pixelcolor::BinaryColor,
     prelude::*,
@@ -11,53 +11,52 @@ use embedded_graphics::{
 };
 
 use crate::{
-    DISPLAY_HEIGHT, DISPLAY_WIDTH, InputEvt, animation::FlushableDisplay, menu::{BareMenu, Lerp, Menu}, sht31::SHT31Reading
+    DISPLAY_HEIGHT, DISPLAY_WIDTH, InputEvt, PRIMITIVE_STYLE_ON, animation::FlushableDisplay, menu::{BareMenu, Lerp, Menu}, sht31::SHT31Reading
 };
 struct MenuItem {
     name: &'static str,
-    logo: ImageRawBE<'static, BinaryColor>,
+    logo: ImageRaw<'static, BinaryColor>,
 }
 
 struct MiniLogo {
-    temp: ImageRawBE<'static, BinaryColor>,
-    humid: ImageRawBE<'static, BinaryColor>,
+    temp: ImageRaw<'static, BinaryColor>,
+    humid: ImageRaw<'static, BinaryColor>,
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
-enum SideMenu {
+pub enum Selection {
     Fan = 0,
     Wifi = 1,
     Sensor = 2,
 }
 
-impl SubAssign<u8> for SideMenu {
+impl SubAssign<u8> for Selection {
     fn sub_assign(&mut self, rhs: u8) {
         *self = *self - rhs;
     }
 }
-impl AddAssign<u8> for SideMenu {
+impl AddAssign<u8> for Selection {
     fn add_assign(&mut self, rhs: u8) {
         *self = *self + rhs;
     }
 }
-impl Add<u8> for SideMenu {
-    type Output = SideMenu;
+impl Add<u8> for Selection {
+    type Output = Selection;
     fn add(self, rhs: u8) -> Self::Output {
         let mut v = self as u8 + rhs;
         if v > Self::LEN as u8 -1 {v=Self::LEN as u8 -1};
         v.into()
     }
 }
-impl Sub<u8> for SideMenu {
-    type Output = SideMenu;
+impl Sub<u8> for Selection {
+    type Output = Selection;
     fn sub(self, rhs: u8) -> Self::Output {
-        let mut v = self as u8 - rhs;
-        if v < 0 {v=0};
+        let v = if self as u8 > 0 {self as u8 - rhs} else {0};
         v.into()
     }
 }
 
-impl From<u8> for SideMenu {
+impl From<u8> for Selection {
     fn from(value: u8) -> Self {
         match value {
             0 => Self::Fan,
@@ -68,19 +67,20 @@ impl From<u8> for SideMenu {
     }
 }
 
-impl SideMenu {
+impl Selection {
     const LEN : usize = 3;
 }
 
 const MENU_ITEM_GAP: u32 = 3;
 pub struct MainMenu {
-    side_menu_items: [MenuItem; SideMenu::LEN],
-    selected_side_menu: SideMenu,
+    selection: [MenuItem; Selection::LEN],
+    selected: Selection,
     mini_logo: MiniLogo,
     side_menu_lerp: Option<Lerp>,
     changed: bool,
     climate: Option<SHT31Reading>,
     text_char : MonoTextStyle<'static, BinaryColor>,
+    label_char : MonoTextStyle<'static, BinaryColor>
 }
 
 pub enum OnInputFlag {
@@ -90,30 +90,30 @@ pub enum OnInputFlag {
 
 const SIDE_MENU_LERP_DURATION: Duration = Duration::from_millis(200);
 impl MainMenu {
-    pub fn new() -> Self {
-        let side_menu_items: [MenuItem; SideMenu::LEN] = [
+    pub fn new(selected : Option<Selection>) -> Self {
+        let side_menu_items: [MenuItem; Selection::LEN] = [
             MenuItem {
                 name: "Fan",
-                logo: ImageRawBE::new(include_bytes!("../../assets/fan.bin"), 25),
+                logo: ImageRaw::new(include_bytes!("../../assets/fan.bin"), 25),
             },
             MenuItem {
                 name: "WiFi",
-                logo: ImageRawBE::new(include_bytes!("../../assets/wifi.bin"), 25),
+                logo: ImageRaw::new(include_bytes!("../../assets/wifi.bin"), 25),
             },
             MenuItem {
                 name: "Sensor",
-                logo: ImageRawBE::new(include_bytes!("../../assets/sensor.bin"), 25),
+                logo: ImageRaw::new(include_bytes!("../../assets/sensor.bin"), 25),
             },
         ];
 
         let mini_logo = MiniLogo {
-            temp: ImageRawBE::new(include_bytes!("../../assets/mini-temp.bin"), 5),
-            humid: ImageRawBE::new(include_bytes!("../../assets/mini-humid.bin"), 5),
+            temp: ImageRaw::new(include_bytes!("../../assets/mini-temp.bin"), 5),
+            humid: ImageRaw::new(include_bytes!("../../assets/mini-humid.bin"), 5),
         };
 
         return Self {
-            side_menu_items,
-            selected_side_menu: 0.into(),
+            selection: side_menu_items,
+            selected: selected.unwrap_or(0.into()),
             mini_logo,
             side_menu_lerp: None,
             changed: true,
@@ -121,7 +121,9 @@ impl MainMenu {
             text_char: MonoTextStyle::new(
                 &embedded_graphics::mono_font::ascii::FONT_5X8,
                 BinaryColor::On,
-            )
+            ),
+            label_char : MonoTextStyle::new(
+                &embedded_graphics::mono_font::ascii::FONT_6X12, BinaryColor::On)
         };
     }
     pub async fn set_climate(&mut self, climate: SHT31Reading) {
@@ -131,6 +133,7 @@ impl MainMenu {
     async fn render(&self, display: &mut impl FlushableDisplay) {
         display.clear(BinaryColor::Off).unwrap();
 
+        // draw humid & temp info
         let mini_temp_logo = Image::new(&self.mini_logo.temp, Point::new(0, 2));
         let mini_humid_logo = Image::new(&self.mini_logo.humid, Point::new(0, 15));
 
@@ -156,17 +159,18 @@ impl MainMenu {
             None => {}
         }
 
+        // draw side selection
         let padding = 4;
         let mut cur_y = DISPLAY_HEIGHT as i32 / 2;
-        for (i, item) in self.side_menu_items.iter().enumerate() {
+        for (i, item) in self.selection.iter().enumerate() {
             let item_height = item.logo.size().height as i32;
             let item_width = item.logo.size().width;
-            let is_selected = self.selected_side_menu as usize == i;
+            let is_selected = self.selected as usize == i;
 
             let lerp = if let Some(lerp) = self.side_menu_lerp.as_ref() {
                 lerp.get()
             } else {
-                self.selected_side_menu as u8 as f32
+                self.selected as u8 as f32
             };
 
             let logo_position = Point::new(
@@ -183,24 +187,23 @@ impl MainMenu {
             logo.draw(display).unwrap();
         }
 
-        let style = PrimitiveStyle::with_fill(BinaryColor::On);
-
-        let logo_width = self.side_menu_items[0].logo.size().width as i32;
-        let title_rect_w = 30;
+        // display selection label
+        let logo_width = self.selection[0].logo.size().width as i32;
+        let title_rect_w = 34;
         let title_rect_h = 3;
-        let title_rect_x = DISPLAY_WIDTH as i32 - logo_width - padding * 2 - title_rect_w - 5;
+        let title_rect_x = DISPLAY_WIDTH as i32 - logo_width - padding * 2 - title_rect_w - 7;
         let title_rect_y = DISPLAY_HEIGHT as i32 - title_rect_h;
         Rectangle::new(
             Point::new(title_rect_x, title_rect_y),
             Size::new(title_rect_w as u32, title_rect_h as u32),
         )
-        .draw_styled(&style, display)
+        .draw_styled(&PRIMITIVE_STYLE_ON, display)
         .unwrap();
 
         Text::with_alignment(
-            self.side_menu_items[self.selected_side_menu as usize].name,
+            self.selection[self.selected as usize].name,
             Point::new(title_rect_x + title_rect_w / 2, title_rect_y - 5),
-            self.text_char,
+            self.label_char,
             embedded_graphics::text::Alignment::Center,
         )
         .draw(display)
@@ -209,22 +212,22 @@ impl MainMenu {
         display.flush().await.unwrap();
     }
     pub fn on_input(&mut self, evt: InputEvt) -> OnInputFlag {
-        let old_selected_side_menu = self.selected_side_menu;
+        let old_selected_side_menu = self.selected;
         match evt {
             InputEvt::Up => {
-                if self.selected_side_menu > 0.into() {
-                    self.selected_side_menu -= 1;
+                if self.selected > 0.into() {
+                    self.selected -= 1;
                     self.changed = true;
                 }
             }
             InputEvt::Down => {
-                if self.selected_side_menu < (SideMenu::LEN as u8-1).into() {
-                    self.selected_side_menu += 1;
+                if self.selected < (Selection::LEN as u8-1).into() {
+                    self.selected += 1;
                     self.changed = true;
                 }
             }
             InputEvt::Enter => {
-                if self.selected_side_menu == SideMenu::Sensor {
+                if self.selected == Selection::Sensor {
                     return OnInputFlag::ToSensorMenu;
                 }
             }
@@ -234,14 +237,14 @@ impl MainMenu {
                 Some(old_lerp) => {
                     let _ = self.side_menu_lerp.insert(Lerp::new(
                         old_lerp.get(),
-                        self.selected_side_menu as u8 as f32,
+                        self.selected as u8 as f32,
                         SIDE_MENU_LERP_DURATION,
                     ));
                 }
                 None => {
                     let _ = self.side_menu_lerp.insert(Lerp::new(
                         old_selected_side_menu as u8 as f32,
-                        self.selected_side_menu as u8 as f32,
+                        self.selected as u8 as f32,
                         SIDE_MENU_LERP_DURATION,
                     ));
                 }

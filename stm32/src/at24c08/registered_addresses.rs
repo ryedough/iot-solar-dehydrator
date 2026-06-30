@@ -7,7 +7,7 @@ pub const SHT_CALIBRATION : Addresses<8, SHT31Reading> = Addresses::new(0,0);
 impl ConvRawBytes<8> for SHT31Reading{
     fn from_raw_bytes(bytes : [u8; 8]) -> Self {
         Self {
-            temp : f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            temp : f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
             humid : f32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes [7]]),
         }
     }

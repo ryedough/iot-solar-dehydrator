@@ -6,10 +6,10 @@ pub trait FlushableDisplay : embedded_graphics::draw_target::DrawTarget<Color=Bi
     async fn flush(&mut self) -> Result<(), Self::Error>;
 }
 
-use embedded_graphics::{image::Image, prelude::*, primitives::{PrimitiveStyle, Rectangle, StyledDrawable}};
+use embedded_graphics::{image::Image, prelude::*, primitives::{Rectangle, StyledDrawable}};
 use embedded_hal_async::i2c;
 
-use crate::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use crate::{DISPLAY_HEIGHT, DISPLAY_WIDTH, PRIMITIVE_STYLE_OFF, PRIMITIVE_STYLE_ON};
 
 // These const are defined in Ticks (not in millisecond)
 // Tick are defined by the animate function
@@ -19,8 +19,6 @@ const LOGO_SWIPE_BOX_STAGGER : u8 = 1;
 const LOGO_SHOW : u32 = 15;
 pub struct LogoAnimation {
     swipe : [(u8, u8); 64 / LOGO_SWIPE_BOX_H],
-    swipe_box_style : PrimitiveStyle<BinaryColor>,
-    swipe_clear_style : PrimitiveStyle<BinaryColor>,
     ryedough_logo : ImageRaw<'static,BinaryColor>,
     swipe_full_at_tick : Option<u32>,
     tick_n : u32,
@@ -32,8 +30,6 @@ impl LogoAnimation {
         let ryedough_logo: ImageRaw<'_, BinaryColor> = ImageRaw::new(ryedough_logo, 64);
         Self {
             swipe : [(0,0); 64/LOGO_SWIPE_BOX_H],
-            swipe_box_style : PrimitiveStyle::with_fill(BinaryColor::On),
-            swipe_clear_style : PrimitiveStyle::with_fill(BinaryColor::Off),
             swipe_full_at_tick : None,
             ryedough_logo : ryedough_logo,
             tick_n : 0,
@@ -57,7 +53,7 @@ impl LogoAnimation {
 
                 let r = Rectangle::new(Point::new( 0, i as i32 * LOGO_SWIPE_BOX_H as i32),
                 Size::new(*swipe_w as u32, LOGO_SWIPE_BOX_H as u32));
-                r.draw_styled(&self.swipe_box_style, display)?;
+                r.draw_styled(&PRIMITIVE_STYLE_ON, display)?;
             }
         }
 
@@ -83,7 +79,7 @@ impl LogoAnimation {
                 }
                 let r = Rectangle::new(Point::new(0 as i32, i as i32 * LOGO_SWIPE_BOX_H as i32),
                 Size::new(*swipe_w as u32, LOGO_SWIPE_BOX_H as u32));
-                r.draw_styled(&self.swipe_clear_style, display)?;
+                r.draw_styled(&PRIMITIVE_STYLE_OFF, display)?;
             }
         } else {
             if let Some((_, width)) = self.swipe.last().copied()
