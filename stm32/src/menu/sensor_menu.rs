@@ -146,7 +146,7 @@ impl SensorMenu{
                         }
                     },
                     InputEvt::Down => {
-                        if self.selection as u8 >= Selection::LEN -1 {
+                        if self.selection as u8 >= Selection::LEN-1 {
                             self.selection = 0.into();
                         } else {
                             self.selection += 1;

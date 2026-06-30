@@ -25,7 +25,6 @@ bind_interrupts!(struct Irqs {
     DMA1_CHANNEL6 => embassy_stm32::dma::InterruptHandler<embassy_stm32::peripherals::DMA1_CH6>;
     DMA1_CHANNEL7 => embassy_stm32::dma::InterruptHandler<embassy_stm32::peripherals::DMA1_CH7>;
     EXTI0 => embassy_stm32::exti::InterruptHandler<embassy_stm32::interrupt::typelevel::EXTI0>;
-    EXTI1 => embassy_stm32::exti::InterruptHandler<embassy_stm32::interrupt::typelevel::EXTI1>;
     EXTI3 => embassy_stm32::exti::InterruptHandler<embassy_stm32::interrupt::typelevel::EXTI3>;
     EXTI4 => embassy_stm32::exti::InterruptHandler<embassy_stm32::interrupt::typelevel::EXTI4>;
 });
@@ -69,12 +68,11 @@ async fn main(spawner: Spawner) -> ! {
         error!("Display not found, retrying...");
         Timer::after_secs(1).await;
     }
-    // animate logo splash screen
-    let mut logo_anim : [Animations; _] = [LogoAnimation::new()];
-    let logo_anim = animate(&mut display, &mut logo_anim, Duration::from_millis(50));
 
+    // animate logo splash screen
+    let mut logo_anim = LogoAnimation::new();
     // join read setting and animate logo
-    let (calibration, logo_anim)= embassy_futures::join::join(calibration, logo_anim).await;
+    let (calibration, logo_anim)= embassy_futures::join::join(calibration, logo_anim.animate(&mut display, Duration::from_millis(50))).await;
     let calibration = calibration.unwrap();
     // on first boot, sht reading will be nan
     let calibration = if calibration.temp.is_nan() || calibration.humid.is_nan() {

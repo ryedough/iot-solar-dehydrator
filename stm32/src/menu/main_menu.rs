@@ -2,26 +2,25 @@ use core::{fmt::Write, ops::{Add, AddAssign, Sub, SubAssign}};
 use embassy_time::{Duration};
 use embedded_graphics::{
     Drawable,
-    image::Image,
+    image::{Image, ImageRawBE},
     mono_font::MonoTextStyle,
     pixelcolor::BinaryColor,
     prelude::*,
     primitives::{PrimitiveStyle, Rectangle, StyledDrawable},
     text::Text,
 };
-use tinybmp::Bmp;
 
 use crate::{
     DISPLAY_HEIGHT, DISPLAY_WIDTH, InputEvt, animation::FlushableDisplay, menu::{BareMenu, Lerp, Menu}, sht31::SHT31Reading
 };
 struct MenuItem {
     name: &'static str,
-    logo: Bmp<'static, BinaryColor>,
+    logo: ImageRawBE<'static, BinaryColor>,
 }
 
 struct MiniLogo {
-    temp: Bmp<'static, BinaryColor>,
-    humid: Bmp<'static, BinaryColor>,
+    temp: ImageRawBE<'static, BinaryColor>,
+    humid: ImageRawBE<'static, BinaryColor>,
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd)]
@@ -95,21 +94,21 @@ impl MainMenu {
         let side_menu_items: [MenuItem; SideMenu::LEN] = [
             MenuItem {
                 name: "Fan",
-                logo: Bmp::from_slice(include_bytes!("../../assets/fan.bmp")).unwrap(),
+                logo: ImageRawBE::new(include_bytes!("../../assets/fan.bin"), 25),
             },
             MenuItem {
                 name: "WiFi",
-                logo: Bmp::from_slice(include_bytes!("../../assets/wifi.bmp")).unwrap(),
+                logo: ImageRawBE::new(include_bytes!("../../assets/wifi.bin"), 25),
             },
             MenuItem {
                 name: "Sensor",
-                logo: Bmp::from_slice(include_bytes!("../../assets/sensor.bmp")).unwrap(),
+                logo: ImageRawBE::new(include_bytes!("../../assets/sensor.bin"), 25),
             },
         ];
 
         let mini_logo = MiniLogo {
-            temp: Bmp::from_slice(include_bytes!("../../assets/mini-temp.bmp")).unwrap(),
-            humid: Bmp::from_slice(include_bytes!("../../assets/mini-humid.bmp")).unwrap(),
+            temp: ImageRawBE::new(include_bytes!("../../assets/mini-temp.bin"), 5),
+            humid: ImageRawBE::new(include_bytes!("../../assets/mini-humid.bin"), 5),
         };
 
         return Self {
