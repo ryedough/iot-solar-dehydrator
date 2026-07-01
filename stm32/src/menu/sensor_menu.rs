@@ -1,9 +1,10 @@
 use core::{fmt::Write, ops::{Add, AddAssign, Sub, SubAssign}};
 
+use embassy_time::{Duration, Instant};
 use embedded_graphics::{mono_font::MonoTextStyle, pixelcolor::BinaryColor, prelude::*, primitives::{PrimitiveStyle, Rectangle, StyledDrawable}, text::Text};
 use heapless::String;
 
-use crate::{DISPLAY_HEIGHT, DISPLAY_WIDTH, InputEvt, PRIMITIVE_STYLE_ON, animation::FlushableDisplay, menu::BareMenu, sht31::SHT31Reading};
+use crate::{DISPLAY_HEIGHT, DISPLAY_WIDTH, InputEvt, PRIMITIVE_STYLE_BORDER_ONLY, PRIMITIVE_STYLE_ON, animation::FlushableDisplay, menu::BareMenu, sht31::SHT31Reading};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Selection {
@@ -57,6 +58,16 @@ impl AddAssign<u8> for Selection {
     }
 }
 
+enum ChangeHold {
+    Add(f32),
+    Sub(f32),
+}
+
+struct ChangeHoldAt {
+    at : Instant,
+    change_hold : ChangeHold,
+}
+
 #[derive(PartialEq)]
 enum Mode {
     Selection,
@@ -76,9 +87,11 @@ pub struct SensorMenu{
     info_char : MonoTextStyle<'static, BinaryColor>,
     calibration : SHT31Reading,
     changed : bool,
+    change_hold : Option<ChangeHoldAt>,
     mode : Mode,
 }
 impl SensorMenu{
+    const CHANGE_HOLD_EXPIRE : Duration = Duration::from_millis(200);
     pub fn new(calibration : SHT31Reading)->Self{
         Self{
             selection: 0.try_into().unwrap(),
@@ -87,6 +100,7 @@ impl SensorMenu{
                 &embedded_graphics::mono_font::ascii::FONT_6X12,
                 BinaryColor::On,
             ),
+            change_hold : None,
             info_char: MonoTextStyle::new(
                 &embedded_graphics::mono_font::ascii::FONT_6X12,
                 BinaryColor::Off
@@ -142,12 +156,11 @@ impl SensorMenu{
 
         // draw done & cancel button -------------------------------------------------
         let btn_y = humid_y + 7;
-        let border_only = PrimitiveStyle::with_stroke(BinaryColor::On, 1);
 
         // draw done button
         let done_btn_style = match self.selection {
             Selection::Done => &PRIMITIVE_STYLE_ON,
-            _ => &border_only,
+            _ => &PRIMITIVE_STYLE_BORDER_ONLY,
         };
         let done_txt_style = match self.selection {
             Selection::Done => self.info_char,
@@ -161,7 +174,7 @@ impl SensorMenu{
         //draw cancel button
         let cancel_btn_style = match self.selection {
             Selection::Cancel => &PRIMITIVE_STYLE_ON,
-            _ => &border_only,
+            _ => &PRIMITIVE_STYLE_BORDER_ONLY,
         };
         let cancel_txt_style = match self.selection {
             Selection::Cancel => self.info_char,
@@ -197,20 +210,29 @@ impl SensorMenu{
 
         display.flush().await.unwrap();
     }
-
-    pub fn on_input(&mut self, evt: crate::InputEvt) -> OnInputFlag {
+}
+impl BareMenu for SensorMenu {
+    type OnInputReturn = OnInputFlag;
+    async fn tick(&mut self, display: &mut impl FlushableDisplay) {
+        if self.changed {
+            self.changed = false;
+            self.render(display).await;
+        }
+    }
+    fn on_input(&mut self, evt: crate::InputEvt) -> OnInputFlag {
         self.changed = true;
         match &self.mode {
             Mode::Selection => {
+                self.change_hold = None;
                 match &evt {
-                    InputEvt::Up => {
+                    InputEvt::CounterClockwise => {
                         if self.selection as usize == 0 {
                             self.selection = (Selection::LEN-1).into();
                         } else {
                             self.selection -= 1;
                         }
                     },
-                    InputEvt::Down => {
+                    InputEvt::Clockwise => {
                         if self.selection as u8 >= Selection::LEN-1 {
                             self.selection = 0.into();
                         } else {
@@ -225,41 +247,69 @@ impl SensorMenu{
                 }
             },
             Mode::Editing => {
+                match self.change_hold.as_ref() {
+                    Some(change_hold) => {
+                        if change_hold.at.elapsed() > Self::CHANGE_HOLD_EXPIRE {
+                            self.change_hold = None;
+                        }
+                    },
+                    None => {},
+                }
                 match &evt {
-                    InputEvt::Up => {
+                    InputEvt::Clockwise => {
+                        // check if user do rapid change
+                        let accel = if let Some(change_hold_at) = self.change_hold.as_mut() {
+                            change_hold_at.at = Instant::now();
+                            if let ChangeHold::Add(accel) = &mut change_hold_at.change_hold {
+                                let acc = *accel;
+                                *accel += 0.1;
+                                acc
+                            } else {
+                                change_hold_at.change_hold = ChangeHold::Add(0.);
+                                0.
+                            }
+                        } else {
+                            self.change_hold = Some(ChangeHoldAt{
+                                change_hold : ChangeHold::Add(0.),
+                                at : Instant::now()
+                            });
+                            0.
+                        };
                         match self.selection {
                             Selection::Temperature => {
-                                self.calibration.temp = if self.calibration.temp < 9.9 {
-                                    self.calibration.temp + 0.1
-                                } else {
-                                    9.9
-                                }
+                                self.calibration.temp = (self.calibration.temp + 0.1 + accel).clamp(-9.9, 9.9);
                             },
                             Selection::Humidity => {
-                                self.calibration.humid = if self.calibration.humid < 9.9 {
-                                    self.calibration.humid + 0.1
-                                } else {
-                                    9.9
-                                }
+                                self.calibration.humid = (self.calibration.humid + 0.1 + accel).clamp(-9.9, 9.9)
                             },
                             _ => panic!("illegal editing selection value")
                         }
                     },
-                    InputEvt::Down => {
+                    InputEvt::CounterClockwise => {
+                        // check if user do rapid change
+                        let accel = if let Some(change_hold_at) = self.change_hold.as_mut() {
+                            change_hold_at.at = Instant::now();
+                            if let ChangeHold::Sub(accel) = &mut change_hold_at.change_hold {
+                                let acc = *accel;
+                                *accel += 0.1;
+                                acc
+                            } else {
+                                change_hold_at.change_hold = ChangeHold::Sub(0.);
+                                0.
+                            }
+                        } else {
+                            self.change_hold = Some(ChangeHoldAt{
+                                change_hold : ChangeHold::Sub(0.),
+                                at : Instant::now()
+                            });
+                            0.
+                        };
                         match self.selection {
                             Selection::Temperature => {
-                                self.calibration.temp = if self.calibration.temp > -9.9 {
-                                    self.calibration.temp - 0.1
-                                } else {
-                                    -9.9
-                                }
+                                self.calibration.temp = (self.calibration.temp - 0.1 - accel).clamp(-9.9, 9.9);
                             },
                             Selection::Humidity => {
-                                self.calibration.humid = if self.calibration.humid > -9.9 {
-                                    self.calibration.humid - 0.1
-                                } else {
-                                    -9.9
-                                }
+                                self.calibration.humid = (self.calibration.humid - 0.1 - accel).clamp(-9.9, 9.9)
                             },
                             _ => panic!("illegal editing selection value")
                         }
@@ -269,13 +319,5 @@ impl SensorMenu{
             }
         }
         OnInputFlag::None
-    }
-}
-impl BareMenu for SensorMenu {
-    async fn tick(&mut self, display: &mut impl FlushableDisplay) {
-        if self.changed {
-            self.changed = false;
-            self.render(display).await;
-        }
     }
 }

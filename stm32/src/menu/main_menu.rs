@@ -85,6 +85,7 @@ pub struct MainMenu {
 
 pub enum OnInputFlag {
     ToSensorMenu,
+    ToFanMenu,
     None,
 }
 
@@ -211,24 +212,30 @@ impl MainMenu {
 
         display.flush().await.unwrap();
     }
-    pub fn on_input(&mut self, evt: InputEvt) -> OnInputFlag {
+}
+
+impl BareMenu for MainMenu {
+    type OnInputReturn = OnInputFlag;
+    fn on_input(&mut self, evt: InputEvt) -> OnInputFlag {
         let old_selected_side_menu = self.selected;
         match evt {
-            InputEvt::Up => {
+            InputEvt::CounterClockwise => {
                 if self.selected > 0.into() {
                     self.selected -= 1;
                     self.changed = true;
                 }
             }
-            InputEvt::Down => {
+            InputEvt::Clockwise => {
                 if self.selected < (Selection::LEN as u8-1).into() {
                     self.selected += 1;
                     self.changed = true;
                 }
             }
             InputEvt::Enter => {
-                if self.selected == Selection::Sensor {
-                    return OnInputFlag::ToSensorMenu;
+                return match self.selected {
+                    Selection::Sensor => OnInputFlag::ToSensorMenu,
+                    Selection::Fan => OnInputFlag::ToFanMenu,
+                    Selection::Wifi => OnInputFlag::None,
                 }
             }
         }
@@ -252,9 +259,6 @@ impl MainMenu {
         }
         OnInputFlag::None
     }
-}
-
-impl BareMenu for MainMenu {
     async fn tick(&mut self, display: &mut impl FlushableDisplay) {
         if !self.changed && self.side_menu_lerp.is_none() {
             return;

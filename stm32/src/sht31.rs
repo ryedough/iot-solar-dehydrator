@@ -23,7 +23,7 @@ pub struct SHT31 {
     calibration : SHT31Reading,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct SHT31Reading {
     pub temp : f32,
     pub humid : f32,

@@ -5,14 +5,26 @@ use embedded_hal_async::i2c::Operation;
 
 pub mod registered_addresses;
 
-pub trait ConvRawBytes<const LEN: usize> {
-    fn from_raw_bytes(b : [u8; LEN]) -> Self;
+pub trait ConvRawBytes<const LEN: usize> where Self: Sized {
+    fn from_raw_bytes(b : [u8; LEN]) -> Result<Self, AT24C08Error>;
     fn to_raw_bytes(&self) -> [u8; LEN];
 }
 
 enum RWBit {
     Read = 1,
     Write = 0,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum AT24C08Error {
+    I2CError(embassy_stm32::i2c::Error),
+    ConversionError,
+}
+
+impl From<embassy_stm32::i2c::Error> for AT24C08Error {
+    fn from(value: embassy_stm32::i2c::Error) -> Self {
+        Self::I2CError(value)
+    }
 }
 
 const AT24C08_ADDRESS: u8 = 0b1010000;
@@ -78,7 +90,7 @@ impl AT24C08 {
     pub async fn read<const LEN: usize, T: ConvRawBytes<LEN>>(
         &mut self,
         address: Addresses<LEN, T>,
-    ) -> Result<T, embassy_stm32::i2c::Error> {
+    ) -> Result<T, AT24C08Error> {
         self.wait_write_cycle().await;
         let address = self.get_address(address, RWBit::Read);
         let mut reading = [0; LEN];
@@ -97,7 +109,7 @@ impl AT24C08 {
             .unwrap()
             .transaction(address[0], &mut [Operation::Read(&mut reading)])
             .await?;
-        Ok(T::from_raw_bytes(reading))
+        T::from_raw_bytes(reading)
     }
     pub async fn write<const LEN: usize, T: ConvRawBytes<LEN>>(
         &mut self,

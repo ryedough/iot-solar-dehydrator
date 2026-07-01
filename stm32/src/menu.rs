@@ -2,14 +2,17 @@ use embassy_time::{Duration, Instant};
 
 pub mod main_menu;
 pub mod sensor_menu;
+pub mod fan_menu;
 pub use main_menu::MainMenu;
 pub use sensor_menu::SensorMenu;
+pub use fan_menu::FanMenu;
 
-use crate::{animation::FlushableDisplay};
+use crate::{InputEvt, animation::FlushableDisplay};
 
 pub enum Menu {
     MainMenu(MainMenu),
     SensorMenu(SensorMenu),
+    FanMenu(FanMenu),
 }
 
 impl Menu {
@@ -17,12 +20,15 @@ impl Menu {
         match self {
             Menu::MainMenu(m) => m.tick(display).await,
             Menu::SensorMenu(m) => m.tick(display).await,
+            Menu::FanMenu(m) => m.tick(display).await,
         }
     }
 }
 
-trait BareMenu {
+pub trait BareMenu {
+    type OnInputReturn;
     async fn tick(&mut self, display: &mut impl FlushableDisplay);
+    fn on_input(&mut self, evt: InputEvt) -> Self::OnInputReturn;
 }
 
 struct Lerp {
