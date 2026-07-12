@@ -17,13 +17,13 @@ enum RWBit {
 
 #[derive(Debug, Clone, Copy)]
 pub enum AT24C08Error {
-    I2CError(embassy_stm32::i2c::Error),
+    I2CError,
     ConversionError,
 }
 
 impl From<embassy_stm32::i2c::Error> for AT24C08Error {
     fn from(value: embassy_stm32::i2c::Error) -> Self {
-        Self::I2CError(value)
+        Self::I2CError
     }
 }
 

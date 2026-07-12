@@ -14,6 +14,14 @@ pub enum FanSpeed {
 
 impl FanSpeed {
     const LEN : usize = 4;
+    pub fn as_percent(&self)->u8 {
+        match self {
+            Self::Low => 50,
+            Self::Medium => 66,
+            Self::High => 82,
+            Self::Max => 100,
+        }
+    }
 }
 
 impl Add<u8> for FanSpeed {

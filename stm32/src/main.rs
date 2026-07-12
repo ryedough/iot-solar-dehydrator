@@ -1,18 +1,21 @@
 #![no_std]
 #![no_main]
 
+use core::default;
+
+use cortex_m::asm::nop;
 use defmt::{info, error};
 use defmt_rtt as _;
 use defmt_rtt as _;
 use embassy_executor::{Spawner, task};
 use embassy_futures::{join, select::{Either, Select, select}, yield_now};
-use embassy_stm32::{bind_interrupts, exti::ExtiInput, i2c, mode::Async};
+use embassy_stm32::{bind_interrupts, exti::ExtiInput, gpio::Output, i2c, interrupt::typelevel::TIM2, mode::Async, peripherals::TIM3, spi::{Spi}, time::Hertz, timer::simple_pwm::{PwmPin, SimplePwm}};
 use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, signal::Signal};
 use embassy_time::{Duration, Timer, WithTimeout};
 use embedded_graphics::{pixelcolor::BinaryColor, primitives::PrimitiveStyle};
 use panic_probe as _;
 
-use crate::{at24c08::{AT24C08, AT24C08Error, registered_addresses}, menu::fan_menu::FanSpeed, sht31::SHT31Reading, ssd1315::SSD1315};
+use crate::{at24c08::{AT24C08, AT24C08Error, registered_addresses}, esp12f::ESP12F, menu::fan_menu::FanSpeed, sht31::SHT31Reading, ssd1315::SSD1315};
 
 mod animation;
 mod menu;
@@ -20,13 +23,18 @@ mod ssd1315;
 mod sht31;
 mod at24c08;
 mod rotary_encoder;
+mod esp12f;
 
 bind_interrupts!(struct Irqs {
     I2C1_EV => embassy_stm32::i2c::EventInterruptHandler<embassy_stm32::peripherals::I2C1>;
     I2C1_ER => embassy_stm32::i2c::ErrorInterruptHandler<embassy_stm32::peripherals::I2C1>;
+    DMA1_CHANNEL2 => embassy_stm32::dma::InterruptHandler<embassy_stm32::peripherals::DMA1_CH2>;
+    DMA1_CHANNEL3 => embassy_stm32::dma::InterruptHandler<embassy_stm32::peripherals::DMA1_CH3>;
     DMA1_CHANNEL6 => embassy_stm32::dma::InterruptHandler<embassy_stm32::peripherals::DMA1_CH6>;
     DMA1_CHANNEL7 => embassy_stm32::dma::InterruptHandler<embassy_stm32::peripherals::DMA1_CH7>;
     EXTI0 => embassy_stm32::exti::InterruptHandler<embassy_stm32::interrupt::typelevel::EXTI0>;
+    EXTI1 => embassy_stm32::exti::InterruptHandler<embassy_stm32::interrupt::typelevel::EXTI1>;
+    EXTI2 => embassy_stm32::exti::InterruptHandler<embassy_stm32::interrupt::typelevel::EXTI2>;
     EXTI3 => embassy_stm32::exti::InterruptHandler<embassy_stm32::interrupt::typelevel::EXTI3>;
     EXTI4 => embassy_stm32::exti::InterruptHandler<embassy_stm32::interrupt::typelevel::EXTI4>;
 });
@@ -51,7 +59,7 @@ type SharedI2c = embassy_sync::mutex::Mutex<embassy_sync::blocking_mutex::raw::T
 static I2C : SharedI2c = embassy_sync::mutex::Mutex::new(Option::None);
 static CLIMATE : Signal<ThreadModeRawMutex, SHT31Reading> = Signal::new();
 static INPUT : Signal<ThreadModeRawMutex, InputEvt> = Signal::new();
-static FAN_SPEED : Signal<ThreadModeRawMutex, FanSpeed> = Signal::new();
+// static FAN_SPEED : Signal<ThreadModeRawMutex, FanSpeed> = Signal::new();
 static CALIBRATION : Signal<ThreadModeRawMutex, SHT31Reading> = Signal::new();
 
 struct Settings {
@@ -72,10 +80,10 @@ async fn load_setting() -> Settings{
         match e {
             AT24C08Error::ConversionError => {
                 let default = SHT31Reading::default();
-                eeprom.write(registered_addresses::SHT_CALIBRATION, default.clone());
+                eeprom.write(registered_addresses::SHT_CALIBRATION, default.clone()).await.unwrap();
                 calibration = Ok(default);
             },
-            AT24C08Error::I2CError(_) => {
+            AT24C08Error::I2CError => {
                 error!("eeprom is not connected, trying again after 5 secs");
                 Timer::after_secs(5).await;
                 continue;
@@ -86,10 +94,10 @@ async fn load_setting() -> Settings{
         match e {
             AT24C08Error::ConversionError => {
                 let default = FanSpeed::Medium;
-                eeprom.write(registered_addresses::FAN_SPEED, default);
+                eeprom.write(registered_addresses::FAN_SPEED, default).await.unwrap();
                 fan_speed = Ok(default)
             },
-            AT24C08Error::I2CError(_) => {
+            AT24C08Error::I2CError => {
                 error!("eeprom is not connected, trying again after 5 secs");
                 Timer::after_secs(5).await;
                 continue;
@@ -100,6 +108,28 @@ async fn load_setting() -> Settings{
 }
 
 #[embassy_executor::main]
+async fn test(spawner: Spawner) -> ! {
+    let p = embassy_stm32::init(Default::default());
+    let mut spi_config : embassy_stm32::spi::Config = Default::default();
+    spi_config.mode = embassy_stm32::spi::MODE_0;
+    spi_config.frequency = Hertz(1_000_000);
+    let spi = Spi::new(p.SPI1, p.PA5, p.PA7, p.PA6, p.DMA1_CH3, p.DMA1_CH2, Irqs, spi_config);
+    let mut spi_cs = Output::new(p.PA12, embassy_stm32::gpio::Level::Low, embassy_stm32::gpio::Speed::Medium);
+    let esp8266_handshake_pin = ExtiInput::new(p.PA3, p.EXTI3, embassy_stm32::gpio::Pull::None, Irqs);
+    let esp8266_reset_pin = Output::new(p.PA11, embassy_stm32::gpio::Level::Low, embassy_stm32::gpio::Speed::Medium);
+    let mut esp12f = ESP12F::new(spi, esp8266_handshake_pin, spi_cs, esp8266_reset_pin);
+    {
+        let mut esp12f = esp12f.turn_on().await;
+        let arr = "AT\r\n";
+        esp12f.write(arr.as_bytes()).await;
+        esp12f.read().await;
+    }
+    loop {
+        yield_now().await;
+    }
+}
+
+// #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
     use animation::*;
     let p = embassy_stm32::init(Default::default());
@@ -118,18 +148,33 @@ async fn main(spawner: Spawner) -> ! {
         Timer::after_secs(5).await;
     }
 
-    // animate logo splash screen
+    // load setting and animate splash screen concurrently
     let mut logo_anim = LogoAnimation::new();
-
     let (settings, logo_anim)= embassy_futures::join::join(load_setting(), logo_anim.animate(&mut display, Duration::from_millis(50))).await;
-    // on first boot, sht reading will be nan
     logo_anim.unwrap();
     CALIBRATION.signal(settings.calibration.clone());
 
     // init button
-    let pin_a = ExtiInput::new(p.PB3, p.EXTI3, embassy_stm32::gpio::Pull::None, Irqs);
-    let pin_b = ExtiInput::new(p.PB4, p.EXTI4, embassy_stm32::gpio::Pull::None, Irqs);
-    let enter_btn = ExtiInput::new(p.PB0, p.EXTI0, embassy_stm32::gpio::Pull::Down, Irqs);
+    let pin_a = ExtiInput::new(p.PA0, p.EXTI0, embassy_stm32::gpio::Pull::None, Irqs);
+    let pin_b = ExtiInput::new(p.PA1, p.EXTI1, embassy_stm32::gpio::Pull::None, Irqs);
+    let enter_btn = ExtiInput::new(p.PA2, p.EXTI2, embassy_stm32::gpio::Pull::Down, Irqs);
+
+    let pwm_pin = PwmPin::new(p.PA6, embassy_stm32::gpio::OutputType::PushPull);
+    let mut pwm = SimplePwm::new(p.TIM3, Some(pwm_pin), None,None,None, Hertz(20000), Default::default());
+    pwm.ch1().enable();
+    pwm.ch1().set_duty_cycle_percent(settings.fan_speed.as_percent());
+
+
+    let spi = Spi::new(p.SPI1, p.PB3, p.PB5, p.PB4, p.DMA1_CH3, p.DMA1_CH2, Irqs, Default::default());
+    let spi_cs = Output::new(p.PA12, embassy_stm32::gpio::Level::Low, embassy_stm32::gpio::Speed::Medium);
+    let esp8266_handshake_pin = ExtiInput::new(p.PA3, p.EXTI3, embassy_stm32::gpio::Pull::Down, Irqs);
+    let esp8266_reset_pin = Output::new(p.PA11, embassy_stm32::gpio::Level::Low, embassy_stm32::gpio::Speed::Medium);
+    let mut esp12f = ESP12F::new(spi, esp8266_handshake_pin, spi_cs, esp8266_reset_pin);
+    {
+        let mut esp12f = esp12f.turn_on().await;
+        esp12f.write(&[67, 67, 67, 67, 67, 67, 67]).await;
+    }
+
     // spawner.spawn(listen_input(down_btn, InputEvt::Down).unwrap());
     // spawner.spawn(listen_input(up_btn, InputEvt::Up).unwrap());
     // spawner.spawn(listen_input(enter_btn, InputEvt::Enter).unwrap());
@@ -138,7 +183,7 @@ async fn main(spawner: Spawner) -> ! {
 
     // init task
     spawner.spawn(read_sht().unwrap());
-    spawner.spawn(render_menu(display, settings.eeprom, settings.calibration, settings.fan_speed).unwrap());
+    spawner.spawn(render_menu(display, settings.eeprom, pwm, settings.calibration, settings.fan_speed).unwrap());
     loop {
         yield_now().await;
     }
@@ -192,22 +237,26 @@ async fn listen_input(
 }
 
 #[task]
-async fn render_menu(mut display : SSD1315, mut eeprom : AT24C08, mut calibration : SHT31Reading, mut fan_speed : FanSpeed) {
+async fn render_menu(mut display : SSD1315, mut eeprom : AT24C08, mut pwm : SimplePwm<'static, TIM3>,mut calibration : SHT31Reading, mut fan_speed : FanSpeed) {
     use menu::*;
-    let mut menu = Menu::MainMenu(MainMenu::new(None));
+    let mut menu = Menu::MainMenu(MainMenu::new(None, None));
+    let mut saved_climate = None;
     loop {
         match &mut menu {
             Menu::MainMenu(m) => {
                 use menu::main_menu::OnInputFlag;
                 match CLIMATE.try_take() {
-                    Some(climate) => m.set_climate(climate).await,
-                    None => (),
+                    Some(climate) => {
+                        m.set_climate(climate);
+                        saved_climate = Some(climate);
+                    },
+                    None => {},
                 }
                 let input_flag = INPUT.try_take().map(|e| m.on_input(e));
                 match input_flag {
                     Some(f) => match f {
                         OnInputFlag::ToSensorMenu => {
-                            menu = Menu::SensorMenu(SensorMenu::new(calibration.clone()));
+                            menu = Menu::SensorMenu(SensorMenu::new(calibration));
                         },
                         OnInputFlag::ToFanMenu => {menu = Menu::FanMenu(FanMenu::new(fan_speed))},
                         OnInputFlag::None => (),
@@ -221,12 +270,13 @@ async fn render_menu(mut display : SSD1315, mut eeprom : AT24C08, mut calibratio
                 match input_flag {
                     Some(f) => {
                         match f {
-                            OnInputFlag::BackToMenu => menu = Menu::MainMenu(MainMenu::new(Some(menu::main_menu::Selection::Fan))),
+                            OnInputFlag::BackToMenu => menu = Menu::MainMenu(MainMenu::new(Some(menu::main_menu::Selection::Fan), saved_climate)),
                             OnInputFlag::Save(new_fan_speed) => {
-                                eeprom.write(registered_addresses::FAN_SPEED, new_fan_speed);
+                                eeprom.write(registered_addresses::FAN_SPEED, new_fan_speed).await.unwrap();
                                 fan_speed = new_fan_speed;
-                                FAN_SPEED.signal(new_fan_speed);
-                                menu = Menu::MainMenu(MainMenu::new(Some(menu::main_menu::Selection::Fan)));
+                                pwm.ch1().set_duty_cycle_percent(new_fan_speed.as_percent());
+                                // FAN_SPEED.signal(new_fan_speed);
+                                menu = Menu::MainMenu(MainMenu::new(Some(menu::main_menu::Selection::Fan), saved_climate));
                             },
                             OnInputFlag::None => ()
                         }
@@ -241,12 +291,12 @@ async fn render_menu(mut display : SSD1315, mut eeprom : AT24C08, mut calibratio
                     Some(f) => {
                         match f {
                             OnInputFlag::Save(new_calibration) => {
-                                eeprom.write(registered_addresses::SHT_CALIBRATION,new_calibration.clone()).await.unwrap();
+                                eeprom.write(registered_addresses::SHT_CALIBRATION,new_calibration).await.unwrap();
                                 calibration = new_calibration.clone();
-                                CALIBRATION.signal(new_calibration.clone());
-                                menu = Menu::MainMenu(MainMenu::new(Some(menu::main_menu::Selection::Sensor)));
+                                CALIBRATION.signal(new_calibration);
+                                menu = Menu::MainMenu(MainMenu::new(Some(menu::main_menu::Selection::Sensor), saved_climate));
                             },
-                            OnInputFlag::BackToMain => menu = Menu::MainMenu(MainMenu::new(Some(menu::main_menu::Selection::Sensor))),
+                            OnInputFlag::BackToMain => menu = Menu::MainMenu(MainMenu::new(Some(menu::main_menu::Selection::Sensor), saved_climate)),
                             OnInputFlag::None => ()
                         }
                     },

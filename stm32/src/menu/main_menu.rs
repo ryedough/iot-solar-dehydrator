@@ -91,7 +91,7 @@ pub enum OnInputFlag {
 
 const SIDE_MENU_LERP_DURATION: Duration = Duration::from_millis(200);
 impl MainMenu {
-    pub fn new(selected : Option<Selection>) -> Self {
+    pub fn new(selected : Option<Selection>, climate : Option<SHT31Reading>) -> Self {
         let side_menu_items: [MenuItem; Selection::LEN] = [
             MenuItem {
                 name: "Fan",
@@ -118,7 +118,7 @@ impl MainMenu {
             mini_logo,
             side_menu_lerp: None,
             changed: true,
-            climate: None,
+            climate,
             text_char: MonoTextStyle::new(
                 &embedded_graphics::mono_font::ascii::FONT_5X8,
                 BinaryColor::On,
@@ -127,7 +127,7 @@ impl MainMenu {
                 &embedded_graphics::mono_font::ascii::FONT_6X12, BinaryColor::On)
         };
     }
-    pub async fn set_climate(&mut self, climate: SHT31Reading) {
+    pub fn set_climate(&mut self, climate: SHT31Reading) {
         let _ = self.climate.insert(climate);
         self.changed = true;
     }
