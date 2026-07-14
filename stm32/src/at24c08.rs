@@ -33,6 +33,8 @@ const T_WRITE_CYCLE: Duration = Duration::from_millis(5);
 pub struct Addresses<const LEN: usize, T: ConvRawBytes<LEN>>{
     page: u8,
     offset: u8,
+    absolute : u16, //actually only 10 bit, (0..1023)
+    word : u8, //absolute address but only the lowest 8 bits
     phantom: PhantomData<T>,
 }
 impl<const LEN: usize, T: ConvRawBytes<LEN>> Addresses<LEN, T> {
@@ -40,95 +42,83 @@ impl<const LEN: usize, T: ConvRawBytes<LEN>> Addresses<LEN, T> {
         assert!(page < 64);
         assert!(offset < 16);
         assert!(LEN > 0);
-        assert!(offset as usize + LEN - 1 < 16);
+        let absolute= page as u16 * 16 + offset as u16;
 
         Self {
             page,
             offset,
+            absolute,
+            word : absolute as u8,
             phantom: PhantomData,
         }
     }
-    fn as_address(&self) -> u16 {
-        self.page as u16 * 16 + self.offset as u16
+
+    fn device(&self, rw: RWBit) -> u8 {
+        AT24C08_ADDRESS | ((self.absolute >> 8) as u8) << 1 | rw as u8
     }
 }
 
-pub struct AT24C08 {
-    last_write_cycle: Option<Instant>,
-}
+pub struct AT24C08 {}
 
 impl AT24C08 {
     pub fn new()->Self{
         Self{
-            last_write_cycle : None
-        }
-    }
-    fn get_address<const LEN: usize, T: ConvRawBytes<LEN>>(
-        &self,
-        address: Addresses<LEN, T>,
-        rw: RWBit,
-    ) -> [u8; 2] {
-        let u16address = address.as_address();
-        let device_address = AT24C08_ADDRESS | ((u16address >> 8) as u8) << 1 | rw as u8;
-        let word_address = u16address as u8;
-        [device_address, word_address]
-    }
-    async fn wait_write_cycle(&mut self) {
-        match self.last_write_cycle {
-            Some(lwc) => {
-                let elapsed = lwc.elapsed();
-                if elapsed > T_WRITE_CYCLE {
-                    let _ = self.last_write_cycle.take();
-                } else {
-                    Timer::after_millis(T_WRITE_CYCLE.as_millis() - elapsed.as_millis()).await;
-                    let _ = self.last_write_cycle.take();
-                }
-            }
-            None => {}
         }
     }
     pub async fn read<const LEN: usize, T: ConvRawBytes<LEN>>(
-        &mut self,
+        &self,
         address: Addresses<LEN, T>,
     ) -> Result<T, AT24C08Error> {
-        self.wait_write_cycle().await;
-        let address = self.get_address(address, RWBit::Read);
         let mut reading = [0; LEN];
         I2C.lock()
             .await
             .as_mut()
             .unwrap()
             .transaction(
-                address[0] & !(RWBit::Read as u8),
-                &mut [Operation::Write(&[address[1]])],
+                address.device(RWBit::Read) & !(RWBit::Read as u8),
+                &mut [Operation::Write(&[address.word])],
             )
             .await?;
         I2C.lock()
             .await
             .as_mut()
             .unwrap()
-            .transaction(address[0], &mut [Operation::Read(&mut reading)])
+            .transaction(address.device(RWBit::Read), &mut [Operation::Read(&mut reading)])
             .await?;
         T::from_raw_bytes(reading)
     }
     pub async fn write<const LEN: usize, T: ConvRawBytes<LEN>>(
-        &mut self,
+        &self,
         address: Addresses<LEN, T>,
         value: T,
     ) -> Result<(), embassy_stm32::i2c::Error> {
-        self.wait_write_cycle().await;
-        let address = self.get_address(address, RWBit::Write);
-        let r = I2C
-            .lock()
-            .await
-            .as_mut()
-            .unwrap()
-            .transaction(
-                address[0],
-                &mut [Operation::Write(&[address[1]]), Operation::Write(&value.to_raw_bytes())],
-            )
-            .await;
-        let _ = self.last_write_cycle.insert(Instant::now());
-        r
+        let data = value.to_raw_bytes();
+        let mut remaining = &data[..];
+
+        let mut write_address = address.absolute;
+        while !remaining.is_empty() {
+            let page_offset = (write_address & 0x0F) as usize;
+            let chunk_len = core::cmp::min(16 - page_offset, remaining.len());
+
+            I2C.lock()
+                .await
+                .as_mut()
+                .unwrap()
+                .transaction(
+                    address.device(RWBit::Write),
+                    &mut [
+                        Operation::Write(&[address.word]),
+                        Operation::Write(&remaining[..chunk_len]),
+                    ],
+                )
+                .await?;
+
+            write_address += chunk_len as u16;
+            remaining = &remaining[chunk_len..];
+
+            Timer::after(T_WRITE_CYCLE).await;
+        }
+
+        Ok(())
     }
 }
