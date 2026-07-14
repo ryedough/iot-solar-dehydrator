@@ -114,15 +114,21 @@ async fn test(spawner: Spawner) -> ! {
     spi_config.mode = embassy_stm32::spi::MODE_0;
     spi_config.frequency = Hertz(1_000_000);
     let spi = Spi::new(p.SPI1, p.PA5, p.PA7, p.PA6, p.DMA1_CH3, p.DMA1_CH2, Irqs, spi_config);
-    let mut spi_cs = Output::new(p.PA12, embassy_stm32::gpio::Level::Low, embassy_stm32::gpio::Speed::Medium);
+    let spi_cs = Output::new(p.PA12, embassy_stm32::gpio::Level::Low, embassy_stm32::gpio::Speed::VeryHigh);
     let esp8266_handshake_pin = ExtiInput::new(p.PA3, p.EXTI3, embassy_stm32::gpio::Pull::None, Irqs);
     let esp8266_reset_pin = Output::new(p.PA11, embassy_stm32::gpio::Level::Low, embassy_stm32::gpio::Speed::Medium);
     let mut esp12f = ESP12F::new(spi, esp8266_handshake_pin, spi_cs, esp8266_reset_pin);
     {
         let mut esp12f = esp12f.turn_on().await;
-        let arr = "AT\r\n";
-        esp12f.write(arr.as_bytes()).await;
-        esp12f.read().await;
+        let res = esp12f.scan().await.unwrap();
+        defmt::info!("{:?}", res);
+        esp12f.sleep().await;
+    }
+    {
+        let mut esp12f = esp12f.turn_on().await;
+        let res = esp12f.scan().await.unwrap();
+        defmt::info!("{:?}", res);
+        esp12f.sleep().await;
     }
     loop {
         yield_now().await;
@@ -172,7 +178,6 @@ async fn main(spawner: Spawner) -> ! {
     let mut esp12f = ESP12F::new(spi, esp8266_handshake_pin, spi_cs, esp8266_reset_pin);
     {
         let mut esp12f = esp12f.turn_on().await;
-        esp12f.write(&[67, 67, 67, 67, 67, 67, 67]).await;
     }
 
     // spawner.spawn(listen_input(down_btn, InputEvt::Down).unwrap());

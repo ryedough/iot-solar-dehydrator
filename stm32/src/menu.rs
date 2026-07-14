@@ -3,9 +3,11 @@ use embassy_time::{Duration, Instant};
 pub mod main_menu;
 pub mod sensor_menu;
 pub mod fan_menu;
+pub mod wifi_menu;
 pub use main_menu::MainMenu;
 pub use sensor_menu::SensorMenu;
 pub use fan_menu::FanMenu;
+pub use wifi_menu::WifiMenu;
 
 use crate::{InputEvt, animation::FlushableDisplay};
 
