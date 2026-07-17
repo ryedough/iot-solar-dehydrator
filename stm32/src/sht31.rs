@@ -1,7 +1,8 @@
+use embassy_executor::task;
 use embassy_time::Timer;
 use embedded_hal_async::i2c::Operation;
 
-use crate::{I2C};
+use crate::{I2C, channeled_signal::{SignalReceiver, SignalSender}};
 
 #[derive(Debug)]
 pub enum SHT31Error {
@@ -57,3 +58,22 @@ impl SHT31 {
     }
 }
 
+#[task]
+pub async fn read_sht_task(
+    calibration_sr: SignalReceiver<SHT31Reading>,
+    climate_ss: SignalSender<SHT31Reading>,
+) {
+    let calibration = calibration_sr.receive().await;
+    let mut sht31 = SHT31::new(calibration);
+
+    loop {
+        if let Some(calibration) = calibration_sr.try_receive() {
+            sht31 = SHT31::new(calibration);
+        }
+        match sht31.get_climate().await {
+            Ok(sht31_reading) => climate_ss.send(sht31_reading),
+            Err(err) => defmt::error!("{:?}", err),
+        }
+        Timer::after_secs(5).await;
+    }
+}

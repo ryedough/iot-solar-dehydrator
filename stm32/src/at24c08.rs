@@ -1,9 +1,10 @@
-use crate::I2C;
+use crate::{I2C, at24c08::registered_addresses::Settings};
 use core::marker::PhantomData;
 use embassy_time::{Duration, Instant, Timer};
 use embedded_hal_async::i2c::Operation;
 
 pub mod registered_addresses;
+pub mod configs;
 
 pub trait ConvRawBytes<const LEN: usize> where Self: Sized {
     fn from_raw_bytes(b : [u8; LEN]) -> Result<Self, AT24C08Error>;
@@ -18,7 +19,7 @@ enum RWBit {
 #[derive(Debug, Clone, Copy)]
 pub enum AT24C08Error {
     I2CError,
-    ConversionError,
+    DataCorrupted,
 }
 
 impl From<embassy_stm32::i2c::Error> for AT24C08Error {
@@ -58,16 +59,40 @@ impl<const LEN: usize, T: ConvRawBytes<LEN>> Addresses<LEN, T> {
     }
 }
 
+
 pub struct AT24C08 {}
 
 impl AT24C08 {
-    pub fn new()->Self{
-        Self{
+
+    pub async fn new_and_load_settings()->(Self, Settings) {
+        let eeprom = Self{};
+        let settings = Settings::load(&eeprom).await;
+        (eeprom, settings)
+    }
+
+    /// Will also write value into eeprom if this function caught DataCorrupted Error
+    pub async fn read_or_default<T : ConvRawBytes<LEN> + Default, const LEN : usize>(
+        &self,
+        addr: &Addresses<LEN, T>,
+    ) -> T{
+        let default = T::default();
+        loop {
+            match self.read(addr).await {
+                Ok(v) => return v,
+                Err(AT24C08Error::DataCorrupted) => {
+                    self.write(addr, &default).await.unwrap();
+                    return default;
+                }
+                Err(AT24C08Error::I2CError) => {
+                    defmt::error!("EEPROM not connected, retrying in 5 seconds");
+                    Timer::after_secs(5).await;
+                }
+            }
         }
     }
     pub async fn read<const LEN: usize, T: ConvRawBytes<LEN>>(
         &self,
-        address: Addresses<LEN, T>,
+        address: &Addresses<LEN, T>,
     ) -> Result<T, AT24C08Error> {
         let mut reading = [0; LEN];
         I2C.lock()
@@ -89,8 +114,8 @@ impl AT24C08 {
     }
     pub async fn write<const LEN: usize, T: ConvRawBytes<LEN>>(
         &self,
-        address: Addresses<LEN, T>,
-        value: T,
+        address: &Addresses<LEN, T>,
+        value: &T,
     ) -> Result<(), embassy_stm32::i2c::Error> {
         let data = value.to_raw_bytes();
         let mut remaining = &data[..];
@@ -122,3 +147,4 @@ impl AT24C08 {
         Ok(())
     }
 }
+

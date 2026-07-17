@@ -1,4 +1,9 @@
+use core::task;
+
+use embassy_executor::task;
 use embassy_stm32::{exti::ExtiInput, mode::Async};
+
+use crate::{InputEvt, channeled_signal::SignalSender};
 
 #[derive(PartialEq)]
 pub enum Direction {
@@ -51,6 +56,45 @@ impl RotaryEncoder {
                 | 0b0100 => return Direction::CounterClockwise,
 
                 _ => {}
+            }
+        }
+    }
+}
+
+#[task]
+pub async fn listen_rotary_encoder_task(
+    input_ss: SignalSender<InputEvt>,
+    a: ExtiInput<'static, Async>,
+    b: ExtiInput<'static, Async>,
+) {
+    let mut encoder = RotaryEncoder::new(a, b);
+    let mut counter = 0;
+    let mut counted_dir = Direction::Clockwise;
+    loop {
+        match encoder.wait_direction().await {
+            Direction::Clockwise => {
+                if counted_dir == Direction::Clockwise {
+                    counter += 1;
+                    if counter > 2 {
+                        input_ss.send(InputEvt::Clockwise);
+                        counter = 0;
+                    }
+                } else {
+                    counted_dir = Direction::Clockwise;
+                    counter = 0;
+                }
+            }
+            Direction::CounterClockwise => {
+                if counted_dir == Direction::CounterClockwise {
+                    counter += 1;
+                    if counter > 2 {
+                        input_ss.send(InputEvt::CounterClockwise);
+                        counter = 0;
+                    }
+                } else {
+                    counted_dir = Direction::CounterClockwise;
+                    counter = 0;
+                }
             }
         }
     }

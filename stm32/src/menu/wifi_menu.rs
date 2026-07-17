@@ -1,3 +1,3 @@
-struct WifiMenu{
+pub struct WifiMenu{
 
 }

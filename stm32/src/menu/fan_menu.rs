@@ -12,6 +12,12 @@ pub enum FanSpeed {
     Max,
 }
 
+impl Default for FanSpeed {
+    fn default() -> Self {
+        Self::Medium
+    }
+}
+
 impl FanSpeed {
     const LEN : usize = 4;
     pub fn as_percent(&self)->u8 {
