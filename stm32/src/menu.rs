@@ -2,6 +2,7 @@ use core::sync::atomic::Ordering;
 
 use embassy_executor::task;
 use embassy_stm32::{peripherals::TIM1, timer::simple_pwm::SimplePwm};
+use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, pubsub::Publisher, watch::Receiver};
 use embassy_time::{Duration, Instant, Timer};
 
 pub mod main_menu;
@@ -64,6 +65,7 @@ impl Lerp {
     }
 }
 
+const MAX_IDLE :Duration = Duration::from_secs(10);
 
 #[task]
 pub async fn render_menu_task(
@@ -71,19 +73,34 @@ pub async fn render_menu_task(
     eeprom: AT24C08,
     mut pwm: SimplePwm<'static, TIM1>,
     input_sr: SignalReceiver<InputEvt>,
-    climate_sr: SignalReceiver<SHT31Reading>,
+    mut climate_wr: Receiver<'static, ThreadModeRawMutex, SHT31Reading, 2>,
     calibration_ss: SignalSender<SHT31Reading>,
     mut calibration: SHT31Reading,
     mut fan_speed: FanSpeed,
 ) {
     let mut menu = Menu::MainMenu(MainMenu::new(None, None));
     let mut saved_climate = None;
+    let mut last_input = Instant::now();
     loop {
         let input_flag = input_sr.try_receive();
+        match input_flag {
+            Some(_) => {
+                last_input = Instant::now();
+            },
+            None => {
+                if last_input.elapsed() > MAX_IDLE {
+                    display.sleep().await.unwrap();
+                    input_sr.receive().await;
+                    display.wake().await.unwrap();
+                    last_input = Instant::now();
+                    continue;
+                }
+            },
+        }
         match &mut menu {
             Menu::MainMenu(m) => {
                 use main_menu::OnInputFlag;
-                match climate_sr.try_receive() {
+                match climate_wr.try_changed() {
                     Some(climate) => {
                         m.set_climate(climate);
                         saved_climate = Some(climate);
@@ -135,7 +152,7 @@ pub async fn render_menu_task(
             }
             Menu::SensorMenu(m) => {
                 use sensor_menu::OnInputFlag;
-                let input_flag = input_sr.try_receive().map(|e| m.on_input(e));
+                let input_flag = input_flag.map(|e| m.on_input(e));
                 match input_flag {
                     Some(f) => match f {
                         OnInputFlag::Save(new_calibration) => {

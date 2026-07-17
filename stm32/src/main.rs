@@ -1,40 +1,32 @@
 #![no_std]
 #![no_main]
 
-use core::sync::atomic::AtomicBool;
-
 use defmt::{error, info};
 use defmt_rtt as _;
 use defmt_rtt as _;
 use embassy_executor::{Spawner, task};
-use embassy_futures::{
-    join,
-    select::{Either, Select, select},
-    yield_now,
-};
+use embassy_futures::yield_now;
 use embassy_stm32::{
     bind_interrupts,
     exti::ExtiInput,
     gpio::{AfioRemap, Output},
-    i2c,
-    interrupt::typelevel::TIM2,
     mode::Async,
-    peripherals::{TIM1, TIM3},
     spi::Spi,
     time::Hertz,
     timer::simple_pwm::{PwmPin, SimplePwm},
 };
-use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel, signal::Signal};
-use embassy_time::{Duration, Timer, WithTimeout};
+use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, channel, watch::Watch};
+use embassy_time::{Duration, Timer};
 use embedded_graphics::{pixelcolor::BinaryColor, primitives::PrimitiveStyle};
 use panic_probe as _;
 
 use crate::{
-    at24c08::{
-        AT24C08, AT24C08Error, ConvRawBytes,
-        configs::WifiConfig,
-        registered_addresses::{self},
-    }, channeled_signal::{ChanneledSignal, SignalReceiver, SignalSender}, esp12f::{ConnWifi, ESP12F, task::ESP12FTaskMaker}, menu::{fan_menu::FanSpeed, render_menu_task}, rotary_encoder::listen_rotary_encoder_task, sht31::{SHT31Reading, read_sht_task}, ssd1315::SSD1315
+    at24c08::AT24C08,
+    channeled_signal::{ChanneledSignal, SignalSender},
+    esp12f::{ESP12F, task::ESP12FExecuteCommandTaskMaker},
+    menu::render_menu_task,
+    rotary_encoder::listen_rotary_encoder_task,
+    sht31::{SHT31Reading, read_sht_task},
 };
 
 mod animation;
@@ -83,11 +75,11 @@ type SharedI2c = embassy_sync::mutex::Mutex<
     >,
 >;
 static I2C: SharedI2c = embassy_sync::mutex::Mutex::new(Option::None);
-static CLIMATE_CH: ChanneledSignal<SHT31Reading> = ChanneledSignal::new();
 static INPUT_CH: ChanneledSignal<InputEvt> = ChanneledSignal::new();
 static CALIBRATION_CH: ChanneledSignal<SHT31Reading> = ChanneledSignal::new();
+static CLIMATE_WATCH: Watch<ThreadModeRawMutex, SHT31Reading, 2> = Watch::new();
 
-static ESP12_TM: ESP12FTaskMaker = ESP12FTaskMaker::new(
+static ESP12_TM: ESP12FExecuteCommandTaskMaker = ESP12FExecuteCommandTaskMaker::new(
     [channel::Channel::new(), channel::Channel::new()],
     [channel::Channel::new(), channel::Channel::new()],
 );
@@ -116,31 +108,31 @@ async fn main(spawner: Spawner) -> ! {
     };
 
     // init esp12f
-    let mut spi_config: embassy_stm32::spi::Config = Default::default();
-    spi_config.mode = embassy_stm32::spi::MODE_0;
-    spi_config.frequency = Hertz(1_000_000);
-    let spi = Spi::new(
-        p.SPI1, p.PA5, p.PA7, p.PA6, p.DMA1_CH3, p.DMA1_CH2, Irqs, spi_config,
-    );
-    let spi_cs = Output::new(
-        p.PA12,
-        embassy_stm32::gpio::Level::Low,
-        embassy_stm32::gpio::Speed::VeryHigh,
-    );
-    let esp8266_handshake_pin =
-        ExtiInput::new(p.PA3, p.EXTI3, embassy_stm32::gpio::Pull::None, Irqs);
-    let esp8266_reset_pin = Output::new(
-        p.PA11,
-        embassy_stm32::gpio::Level::Low,
-        embassy_stm32::gpio::Speed::Medium,
-    );
-    let esp12f = ESP12F::new(spi, esp8266_handshake_pin, spi_cs, esp8266_reset_pin);
-    let [esp_ch1, esp_ch2] = ESP12_TM.create_esp12f_execute_command_task(&spawner, esp12f);
+    // let mut spi_config: embassy_stm32::spi::Config = Default::default();
+    // spi_config.mode = embassy_stm32::spi::MODE_0;
+    // spi_config.frequency = Hertz(1_000_000);
+    // let spi = Spi::new(
+    //     p.SPI1, p.PA5, p.PA7, p.PA6, p.DMA1_CH3, p.DMA1_CH2, Irqs, spi_config,
+    // );
+    // let spi_cs = Output::new(
+    //     p.PA12,
+    //     embassy_stm32::gpio::Level::Low,
+    //     embassy_stm32::gpio::Speed::VeryHigh,
+    // );
+    // let esp8266_handshake_pin =
+    //     ExtiInput::new(p.PA3, p.EXTI3, embassy_stm32::gpio::Pull::None, Irqs);
+    // let esp8266_reset_pin = Output::new(
+    //     p.PA11,
+    //     embassy_stm32::gpio::Level::Low,
+    //     embassy_stm32::gpio::Speed::Medium,
+    // );
+    // let esp12f = ESP12F::new(spi, esp8266_handshake_pin, spi_cs, esp8266_reset_pin);
+    // let [esp_ch1, esp_ch2] = ESP12_TM.create_esp12f_execute_command_task(&spawner, esp12f);
 
     // init button
-    let pin_a = ExtiInput::new(p.PA0, p.EXTI0, embassy_stm32::gpio::Pull::None, Irqs);
-    let pin_b = ExtiInput::new(p.PA1, p.EXTI1, embassy_stm32::gpio::Pull::None, Irqs);
-    let enter_btn = ExtiInput::new(p.PA2, p.EXTI2, embassy_stm32::gpio::Pull::Down, Irqs);
+    let pin_a = ExtiInput::new(p.PA1, p.EXTI1, embassy_stm32::gpio::Pull::None, Irqs);
+    let pin_b = ExtiInput::new(p.PA2, p.EXTI2, embassy_stm32::gpio::Pull::None, Irqs);
+    let enter_btn = ExtiInput::new(p.PA0, p.EXTI0, embassy_stm32::gpio::Pull::Down, Irqs);
 
     spawner.spawn(listen_rotary_encoder_task(INPUT_CH.sender(), pin_a, pin_b).unwrap());
     spawner.spawn(listen_input(INPUT_CH.sender(), enter_btn, InputEvt::Enter).unwrap());
@@ -173,14 +165,14 @@ async fn main(spawner: Spawner) -> ! {
         .set_duty_cycle_percent(settings.fan_speed.as_percent());
 
     // init task
-    spawner.spawn(read_sht_task(CALIBRATION_CH.receiver(), CLIMATE_CH.sender()).unwrap());
+    spawner.spawn(read_sht_task(CALIBRATION_CH.receiver(), CLIMATE_WATCH.sender()).unwrap());
     spawner.spawn(
         render_menu_task(
             display,
             eeprom,
             pwm,
             INPUT_CH.receiver(),
-            CLIMATE_CH.receiver(),
+            CLIMATE_WATCH.receiver().unwrap(),
             calibration_ss,
             settings.calibration,
             settings.fan_speed,
@@ -204,5 +196,3 @@ async fn listen_input(
         Timer::after_millis(200).await;
     }
 }
-
-

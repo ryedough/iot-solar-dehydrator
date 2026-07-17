@@ -1,4 +1,5 @@
 use embassy_executor::task;
+use embassy_sync::{blocking_mutex::raw::ThreadModeRawMutex, watch::Sender};
 use embassy_time::Timer;
 use embedded_hal_async::i2c::Operation;
 
@@ -61,7 +62,7 @@ impl SHT31 {
 #[task]
 pub async fn read_sht_task(
     calibration_sr: SignalReceiver<SHT31Reading>,
-    climate_ss: SignalSender<SHT31Reading>,
+    climate_ws: Sender<'static, ThreadModeRawMutex, SHT31Reading, 2>,
 ) {
     let calibration = calibration_sr.receive().await;
     let mut sht31 = SHT31::new(calibration);
@@ -71,7 +72,7 @@ pub async fn read_sht_task(
             sht31 = SHT31::new(calibration);
         }
         match sht31.get_climate().await {
-            Ok(sht31_reading) => climate_ss.send(sht31_reading),
+            Ok(sht31_reading) => climate_ws.send(sht31_reading),
             Err(err) => defmt::error!("{:?}", err),
         }
         Timer::after_secs(5).await;

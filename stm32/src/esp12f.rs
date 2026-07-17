@@ -9,7 +9,7 @@ pub mod task;
 
 const READ_BUFFER_LEN : usize = 2048;
 
-#[derive(Debug)]
+#[derive(Debug, defmt::Format)]
 pub struct InvalidResponseLength {
     length : usize,
     expected : usize,
@@ -26,6 +26,7 @@ impl From<TimeoutError> for RawError {
     }
 }
 
+#[derive(defmt::Format)]
 pub enum Error {
     TimeoutError,
     SpiSuccessButESPFail, // esp fail to execute command
@@ -39,7 +40,6 @@ impl From<RawError> for Error {
             RawError::InvalidResponseLength(r) => Self::InvalidResponseLength(r),
         }
     }
-
 }
 
 enum Commands {
